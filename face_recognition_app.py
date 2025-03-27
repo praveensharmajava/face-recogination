@@ -2,12 +2,16 @@ import cv2
 import face_recognition
 import numpy as np
 import os
+import pandas as pd
 
 class FaceRecognitionApp:
     def __init__(self):
         # Initialize empty lists for known face encodings and names
         self.known_face_encodings = []
         self.known_face_names = []
+        
+        # Load personal information from Excel
+        self.personal_info = pd.read_excel('personal_info.xlsx')
         
         # Load known faces from the 'known_faces' directory
         self.load_known_faces()
@@ -39,6 +43,18 @@ class FaceRecognitionApp:
                     self.known_face_names.append(name)
                     print(f"Loaded face: {name}")
     
+    def get_personal_info(self, name):
+        # Find the person's information in the Excel data
+        person_info = self.personal_info[self.personal_info['Name'] == name]
+        if not person_info.empty:
+            return {
+                'DOB': person_info['Date_of_Birth'].iloc[0],
+                'LinkedIn': person_info['LinkedIn_URL'].iloc[0],
+                'Phone': person_info['Phone_Number'].iloc[0],
+                'Email': person_info['Email_ID'].iloc[0]
+            }
+        return None
+
     def run(self):
         while True:
             # Capture frame from webcam
@@ -58,21 +74,25 @@ class FaceRecognitionApp:
             face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
             
             face_names = []
+            face_info = []
             for face_encoding in face_encodings:
                 # Check if the face matches any known face
                 matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
                 name = "Unknown"
+                info = None
                 
                 if self.known_face_encodings:
                     face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
                     best_match_index = np.argmin(face_distances)
                     if matches[best_match_index]:
                         name = self.known_face_names[best_match_index]
+                        info = self.get_personal_info(name)
                 
                 face_names.append(name)
+                face_info.append(info)
             
             # Draw results on frame
-            for (top, right, bottom, left), name in zip(face_locations, face_names):
+            for (top, right, bottom, left), name, info in zip(face_locations, face_names, face_info):
                 # Scale back up face locations since we scaled down the frame
                 top *= 4
                 right *= 4
@@ -80,12 +100,25 @@ class FaceRecognitionApp:
                 left *= 4
                 
                 # Draw rectangle around face
-                cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 0), 2)
                 
-                # Draw name label
-                cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
+                # Calculate text position and size
+                text_y = bottom + 30  # Increased spacing for larger text
                 font = cv2.FONT_HERSHEY_DUPLEX
-                cv2.putText(frame, name, (left + 6, bottom - 6), font, 0.6, (255, 255, 255), 1)
+                font_scale = 0.8  # Increased font size from 0.6 to 0.8
+                
+                # Add black background rectangle for better text visibility
+                cv2.rectangle(frame, (left, bottom), (right, bottom + 150), (0, 0, 0), cv2.FILLED)
+                
+                # Draw name and personal information in white
+                cv2.putText(frame, f"Name: {name}", (left + 6, text_y), font, font_scale, (255, 255, 255), 1)
+                
+                if info:
+                    # Display additional information below the name
+                    cv2.putText(frame, f"DOB: {info['DOB']}", (left + 6, text_y + 30), font, font_scale, (255, 255, 255), 1)
+                    cv2.putText(frame, f"LinkedIn: {info['LinkedIn']}", (left + 6, text_y + 60), font, font_scale, (255, 255, 255), 1)
+                    cv2.putText(frame, f"Phone: {info['Phone']}", (left + 6, text_y + 90), font, font_scale, (255, 255, 255), 1)
+                    cv2.putText(frame, f"Email: {info['Email']}", (left + 6, text_y + 120), font, font_scale, (255, 255, 255), 1)
             
             # Display the frame
             cv2.imshow('Face Recognition', frame)
