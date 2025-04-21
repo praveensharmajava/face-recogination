@@ -6,6 +6,10 @@ import pandas as pd
 from deepface import DeepFace
 from scipy.spatial import distance as dist
 import time
+import requests
+from io import BytesIO
+from PIL import Image
+import re
 
 class FaceRecognitionApp:
     def __init__(self):
@@ -15,6 +19,9 @@ class FaceRecognitionApp:
         
         # Load personal information from Excel
         self.personal_info = pd.read_excel('personal_info.xlsx')
+        
+        # Initialize LinkedIn profile pictures cache
+        self.linkedin_pictures = {}
         
         # Load known faces from the 'known_faces' directory
         self.load_known_faces()
@@ -129,6 +136,52 @@ class FaceRecognitionApp:
         else:
             return "Far"
 
+    def get_linkedin_activity(self, linkedin_url):
+        if not linkedin_url or pd.isna(linkedin_url):
+            return None
+            
+        try:
+            # Extract LinkedIn profile ID from URL
+            profile_id = re.search(r'in/([^/]+)', linkedin_url)
+            if not profile_id:
+                return None
+                
+            # Set headers to mimic a browser request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            # Construct the profile URL
+            profile_url = f"https://www.linkedin.com/in/{profile_id.group(1)}/"
+            
+            # Get the profile page
+            response = requests.get(profile_url, headers=headers)
+            print(response.text)
+            if response.status_code == 200:
+                # Extract recent activity information
+                activity_info = []
+                
+                # Look for recent posts
+                posts = re.findall(r'<span class="visually-hidden">([^<]+)</span>', response.text)
+                if posts:
+                    activity_info.extend(posts[:3])  # Get up to 3 recent posts
+                
+                # Look for recent connections
+                connections = re.findall(r'connected with ([^<]+)', response.text)
+                if connections:
+                    activity_info.extend(connections[:2])  # Get up to 2 recent connections
+                
+                # Look for recent endorsements
+                endorsements = re.findall(r'endorsed ([^<]+) for', response.text)
+                if endorsements:
+                    activity_info.extend(endorsements[:2])  # Get up to 2 recent endorsements
+                
+                return activity_info[:5]  # Return up to 5 recent activities
+                
+        except Exception as e:
+            print(f"Error fetching LinkedIn activity: {e}")
+            return None
+
     def run(self):
         print("Starting Face Recognition App...")
         print("Press 'q' to quit")
@@ -164,7 +217,7 @@ class FaceRecognitionApp:
                 if True in matches:
                     first_match_index = matches.index(True)
                     name = self.known_face_names[first_match_index]
-                    personal_info = self.personal_info[self.personal_info['Name'] == name].iloc[0]
+                    personal_info = self.get_personal_info(name)
 
                 # Analyze face
                 try:
@@ -194,42 +247,51 @@ class FaceRecognitionApp:
                     info_text = [
                         f"Name: {name}",
                         f"Age: {analysis[0]['age']}",
-                        f"Gender: {analysis[0]['gender']}",
+                        f"Gender: {'Male' if analysis[0]['gender'] == 'Man' else 'Female'}",
                         f"Emotion: {analysis[0]['dominant_emotion']}",
                         f"Direction: {direction['horizontal']}-{direction['vertical']}",
                         f"Distance: {distance}",
                         f"Eyes: {eyes_status}"
                     ]
-                    
-                    if personal_info is not None:
-                        info_text.extend([
-                            f"DOB: {personal_info['Date_of_Birth']}",
-                            f"LinkedIn: {personal_info['LinkedIn_URL']}",
-                            f"Phone: {personal_info['Phone_Number']}",
-                            f"Email: {personal_info['Email_ID']}"
-                        ])
-                    
-                    # Draw text background
-                    text_y = top - 10
-                    for text in info_text:
-                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 0.6, 1)[0]
-                        cv2.rectangle(frame, (left, text_y - 20), (left + text_size[0], text_y + 5), (0, 0, 0), cv2.FILLED)
-                        cv2.putText(frame, text, (left, text_y), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
-                        text_y -= 25
-                    
-                except Exception as e:
-                    print(f"Error analyzing face: {str(e)}")
 
-            # Display the number of faces detected
-            cv2.putText(frame, f"Faces Detected: {len(face_locations)}", (10, 30), 
-                       cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 0, 0), 1)
+                    # Add personal information if available
+                    if personal_info:
+                        info_text.extend([
+                            f"DOB: {personal_info['DOB']}",
+                            f"Phone: {personal_info['Phone']}",
+                            f"Email: {personal_info['Email']}"
+                        ])
+                        
+                        # Display LinkedIn activity if available
+                        if personal_info['LinkedIn']:
+                            print(f"Fetching LinkedIn activity for: {personal_info['LinkedIn']}")  # Debug print
+                            linkedin_activity = self.get_linkedin_activity(personal_info['LinkedIn'])
+                            if linkedin_activity:
+                                print("Successfully loaded LinkedIn activity")  # Debug print
+                                # Add activity information to the display
+                                info_text.append("Recent LinkedIn Activity:")
+                                for activity in linkedin_activity:
+                                    info_text.append(f"- {activity}")
+                            else:
+                                print("Failed to load LinkedIn activity")  # Debug print
+
+                    # Display the information
+                    y = top - 10
+                    for text in info_text:
+                        y -= 30
+                        cv2.putText(frame, text, (left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+                except Exception as e:
+                    print(f"Error processing face: {e}")
 
             # Display the resulting frame
             cv2.imshow('Face Recognition', frame)
 
+            # Break the loop if 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+        # Release the video capture and close windows
         self.video_capture.release()
         cv2.destroyAllWindows()
 
